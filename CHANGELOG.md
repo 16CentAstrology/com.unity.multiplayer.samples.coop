@@ -6,7 +6,93 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 Additional documentation and release notes are available at [Multiplayer Documentation](https://docs-multiplayer.unity3d.com).
 
-## [unreleased] - yyyy-mm-dd
+## [2.5.0] - 2024-04-18
+
+### Changed
+* Upgraded Boss Room to Netcode for GameObjects v1.8.1 (#883)
+  * Upgraded to the newer API for Rpcs, Universal Rpcs
+  * ClientConnectedState has been modified to account for server/host now populating DisconnectReason before disconnecting a client before shutting down
+* Upgraded editor version to 2022.3.22f1 (#884)
+  * com.unity.render-pipelines.universal upgraded to v14.0.10
+* ClientPlayerAvatarNetworkAnimator has been created to: instantiate the player model based on a networked GUID, rebind this rig to the player's Animator, and apply synchronize data to said Animator (#886)
+  * This change allows for NetworkAnimator's synchronize step to properly apply its sync data to clients instead of applying an animation state change on OnNetworkSpawn()
+  * A side-effect of this change has been that a coroutine that had been awaiting the assignment of NetworkAnimator has since been removed as it is no longer an issue on Netcode for GameObjects (since v1.3.1)
+
+### Cleanup
+* Removed NetworkObject from MainMenuState (#881)
+
+### Fixed
+* Changed Canvas Sort order of multiple UI elements to enable visibility of RNSM and reconnection attempts during the loading screen (#879)
+* Added Null reference check to ClientInputSender to fix null reference for missing ability (#880)
+
+## [2.4.0] - 2023-12-13
+
+### Changed
+* Upgraded editor version to 2022.3.14f1 (#871)
+  * com.unity.ai.navigation upgraded to v1.1.5
+  * com.unity.render-pipelines.universal upgraded to v14.0.9
+  * com.unity.services.authentication upgraded to v2.7.1
+* Upgraded Boss Room to Netcode for GameObjects v1.7.1 (#871)
+
+### Fixed
+* Fixed NetworkVariable warnings that would be logged when a player was spawned (#863) For a player, certain NetworkVariable values were previously modified before the player's NetworkObject was spawned, resulting in warnings. Now, the NetworkVariable itself is instantiated on the server pre-spawn, such that it is instantiated with the new default value, ensuring the new default value is ready to be read on subsequent OnNetworkSpawn methods for said NetworkObject.
+
+## [2.3.0] - 2023-09-07
+
+### Changed
+* Upgraded editor version to 2022.3.7f1 (#855)
+  * Upgraded Authentication Service package to v2.7.1
+* Replaced usages of null-coalescing and null-conditional operators with regular null checks. (#867) These operators can cause issues when used with types inheriting UnityEngine.Object because that type redefines the == operator to define when an object is null. This redefinition applies to regular null checks (if foo == null) but not to those operators, thus this could lead to unexpected behaviour. While those operators were safely used within Boss Room, only with types that were not inheriting UnityEngine.Object, we decided to remove most usages for consistency. This will also help avoid accidental mistakes, such as a user reusing a part of this code, but modifying it so that one of those operators are used with a UnityEngine.Object.
+* Upgraded Boss Room to Netcode for GameObjects v1.6.0 (#865)
+  * A package Version Define has been created for Netcode for GameObjects v.1.5.2 - v1.6.0. Recent refactorings to NetworkManager's shutdown have prevented the ability to invoke CustomMessages when OnClientDisconnected callbacks are invoked during a shutdown as host. This regression has caused one of our runtime tests, namely Unity.BossRoom.Tests.Runtime.ConnectionManagementTests.UnexpectedServerShutdown_ClientsFailToReconnect, to fail and it does not impact gameplay. This is a known issue and will be addressed in a future NGO version.
+* Upgraded to Lobby 1.1.0 (#860).
+  * Lobbies are now locked when being created and are only unlocked when the relay allocation is ready.
+  * Removed explicit reference to Wire in the package manifest, since Wire is already a dependency of Lobby
+  
+### Fixed
+* Fixed colliders on diagonal walls to not have negative scale (#854).
+* Fixed order of components in networked GameObjects (#866). NetworkObjects are now always above NetworkBehaviours in the component order in GameObjects. This fixes a bug where during scene unloading the NetworkBehaviours would be destroyed before the NetworkObject on the host, which caused these NetworkBehaviours to not have their OnNetworkDespawned invoked in that situation on the host.
+* Unnecessary update requests are no longer being sent to Lobby after receiving update events from the service (#860).
+* Fixed a condition where one would be unable to quit the application through OS-level quit button, nor the in-game quit button (#863)
+
+## [2.2.0] - 2023-07-06
+
+### Added
+* Adding NetworkSimulator tool (#843). It can be used through the NetworkSimulator component's editor (see the [NetworkSimulator documentation](https://docs-multiplayer.unity3d.com/tools/current/tools-network-simulator/)), but only in-editor. To be able to use it in a build, a custom in-game UI window was added. The in-game UI window opens up automatically when starting or joining a networked session, and can be opened and closed again by pressing 'tab' on a keyboard, or using five fingers at once on mobile.
+
+### Changed
+* Upgraded editor version to 2022.3.0f1 (#840)
+* Updated Multiplayer Tools to version 2.0.0-pre.3 (#840)
+* NetworkTransform bandwidth optimizations applied to NetworkObject prefabs inside project (#836) Netcode for GameObjects v1.4.0 introduced bandwidth compression techniques to further reduce the bandwidth footprint of a NetworkTransform's synchronization payload. Inside Boss Room, the base prefab for PCs and NPCs, Character, had its NetworkTransform modified to now utilize half float precision, ie. "Use Half Float Precision" set to true. Its y position is also explicitly no longer synced. This results in a net 5 byte reduction in a NetworkTransform's synchronization payload. This bandwidth reduction was applied also to the Archer's arrow NetworkObject prefabs. Additionally, several NetworkObjects have now their "Synchronize Transform" flag disabled inside their NetworkObject component, meaning that its transform properties will not be synced when spawning and/or when late-joining clients connect. This is particularly useful if the NetworkObject is used more for management related tasks and has no spatial synchronization needs. For more information, see [Netcode for GameObjects' v1.4.0 release notes](https://github.com/Unity-Technologies/com.unity.netcode.gameobjects/releases/tag/ngo%2F1.4.0).
+* Updated Unity Transport Package to version 2.0.2 (#843). This gives access to the NetworkSimulator tool.
+* Changed quality settings to allow full resolution MipMaps on mobile as a workaround for a regression in UI UV scaling (#848)  
+
+## [2.1.0] - 2023-04-27
+
+### Added
+* Added OnServerStopped event to ConnectionManager and ConnectionState (#826). This allows for the detection of an unexpected shutdown on the server side.
+
+### Changed
+* Replaced our polling for lobby updates with a subscription to the new Websocket based LobbyEvents (#805). This saves up a significant amount of bandwidth usage to and from the service, since updates are infrequent in this game. Now clients and hosts only use up bandwidth on the Lobby service when it is needed. With polling, we used to send a GET request per client once every 2s. The responses were between ~550 bytes and 900 bytes, so if we suppose an average of 725 bytes and 100 000 concurrent users (CCU), this amounted to around 725B * 30 calls per minute * 100 000 CCU = 2.175 GB per minute. Scaling this to a month would get us 93.96 TB per month. In our case, since the only changes to the lobbies happen when a user connects or disconnects, most of that data was not necessary and can be saved to reduce bandwidth usage. Since the cost of using the Lobby service depends on bandwidth usage, this would also save money on an actual game.
+* Simplified reconnection flow by offloading responsibility to ConnectionMethod (#804). Now the ClientReconnectingState uses the ConnectionMethod it is configured with to handle setting up reconnection (i.e. reconnecting to the Lobby before trying to reconnect to the Relay server if it is using Relay and Lobby). It can now also fail early and stop retrying if the lobby doesn't exist anymore.
+* Replaced our custom pool implementation using queues with ObjectPool (#824)(#827)
+* Upgraded Boss Room to NGO 1.3.1 (#828) NetworkPrefabs inside NetworkManager's NetworkPrefabs list have been converted to NetworkPrefabsList ScriptableObject. 
+* Upgraded Boss Room to NGO 1.4.0 (#829)
+* Profile names generated are now only 30 characters or under to fit Authentication Service requirements (#831)
+
+### Cleanup
+* Clarified a TODO comment inside ClientCharacter, detailing how anticipation should only be executed on owning client players (#786)
+* Removed now unnecessary cached NetworkBehaviour status on some components, since they now do not allocate memory (#799) 
+* Certain structs converted to implement interface INetworkSerializeByMemcpy instead of INetworkSerializable (#822) INetworkSerializeByMemcpy optimizes for performance at the cost of bandwidth usage and flexibility, however it will only work with structs containing value types. For more details see the official [doc](https://docs-multiplayer.unity3d.com/netcode/current/advanced-topics/serialization/inetworkserializebymemcpy/index.html).
+
+### Fixed
+* EnemyPortals' VFX get disabled and re-enabled once the breakable crystals are broken (#784)
+* Elements inside the Tank's and Rogue's AnimatorTriggeredSpecialFX list have been revised to not loop AudioSource clips, ending the logging of multiple warnings to the console (#785)
+* ClientConnectedState now inherits from OnlineState instead of the base ConnectionState (#801)
+* UpdateRunner now sends the right value for deltaTime when updating its subscribers (#805)
+* Inputs are better sanitized when entering IP address and port (#821). Now all invalid characters are prevented, and UnityTransport's NetworkEndpoint.TryParse is used to verify the validity of the IP address and port that are entered before making the join/host button interactable.
+* Fixed failing connection management test (#826). This test had to be ignored previously because there was no mechanism to detect unexpected server shutdowns. With the OnServerStopped callback introduced in NGO 1.4.0, this is no longer an issue. 
+* Decoupled SceneLoaderWrapper and ConnectionStates (#830). The OnServerStarted and OnClientStarted callbacks available in NGO 1.4.0 allows us to remove the need for an external method to initialize the SceneLoaderWrapper after starting a NetworkingSession.
 
 ## [2.0.4] - 2022-12-13
 ### Changed
@@ -33,7 +119,7 @@ Additional documentation and release notes are available at [Multiplayer Documen
 * Updated Boss Room to NGO 1.1.0 (#708)
   *  Now uses managed types for custom INetworkSerializable in NetworkVariables. NetworkGUID is now a class instead of a struct.
   * Cleanup Relay and UTP setup. Flow is now simpler, no need for the RelayUtilities anymore.
-    * This cleansup various setup steps and puts them all in a new "ConnectionMethod.cs".
+  * This cleans up various setup steps and puts them all in a new "ConnectionMethod.cs".
   * MaxSendQueueSize value is removed, reserialized NetworkManager to remove that now useless value.
   * Reverted the default value for max payload size, this is no longer useful as NGO is mostly reliable.
   * Set connection approval timeout higher, 1 sec is pretty short. If there's a packet drop, some hangups on the network, clients would get timedout too easily.

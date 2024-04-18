@@ -40,7 +40,6 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         /// </summary>
         public Material ReticuleFriendlyMat => m_VisualizationConfiguration.ReticuleFriendlyMat;
 
-
         CharacterSwap m_CharacterSwapper;
 
         public CharacterSwap CharacterSwap => m_CharacterSwapper;
@@ -57,8 +56,6 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
 
         RotationLerper m_RotationLerper;
 
-        PhysicsWrapper m_PhysicsWrapper;
-
         // this value suffices for both positional and rotational interpolations; one may have a constant value for each
         const float k_LerpTime = 0.08f;
 
@@ -66,16 +63,14 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
 
         Quaternion m_LerpedRotation;
 
-        bool m_IsHost;
-
         float m_CurrentSpeed;
 
         /// <summary>
         /// /// Server to Client RPC that broadcasts this action play to all clients.
         /// </summary>
         /// <param name="data"> Data about which action to play and its associated details. </param>
-        [ClientRpc]
-        public void RecvDoActionClientRPC(ActionRequestData data)
+        [Rpc(SendTo.ClientsAndHost)]
+        public void ClientPlayActionRpc(ActionRequestData data)
         {
             ActionRequestData data1 = data;
             m_ClientActionViz.PlayAction(ref data1);
@@ -84,8 +79,8 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         /// <summary>
         /// This RPC is invoked on the client when the active action FXs need to be cancelled (e.g. when the character has been stunned)
         /// </summary>
-        [ClientRpc]
-        public void RecvCancelAllActionsClientRpc()
+        [Rpc(SendTo.ClientsAndHost)]
+        public void ClientCancelAllActionsRpc()
         {
             m_ClientActionViz.CancelAllActions();
         }
@@ -93,8 +88,8 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         /// <summary>
         /// This RPC is invoked on the client when active action FXs of a certain type need to be cancelled (e.g. when the Stealth action ends)
         /// </summary>
-        [ClientRpc]
-        public void RecvCancelActionsByPrototypeIDClientRpc(ActionID actionPrototypeID)
+        [Rpc(SendTo.ClientsAndHost)]
+        public void ClientCancelActionsByPrototypeIDRpc(ActionID actionPrototypeID)
         {
             m_ClientActionViz.CancelAllActionsWithSamePrototypeID(actionPrototypeID);
         }
@@ -103,8 +98,8 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         /// Called on all clients when this character has stopped "charging up" an attack.
         /// Provides a value between 0 and 1 inclusive which indicates how "charged up" the attack ended up being.
         /// </summary>
-        [ClientRpc]
-        public void RecvStopChargingUpClientRpc(float percentCharged)
+        [Rpc(SendTo.ClientsAndHost)]
+        public void ClientStopChargingUpRpc(float percentCharged)
         {
             m_ClientActionViz.OnStoppedChargingUp(percentCharged);
         }
@@ -123,34 +118,31 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
 
             enabled = true;
 
-            m_IsHost = IsHost;
-
             m_ClientActionViz = new ClientActionPlayer(this);
 
             m_ServerCharacter = GetComponentInParent<ServerCharacter>();
-
-            m_PhysicsWrapper = m_ServerCharacter.GetComponent<PhysicsWrapper>();
 
             m_ServerCharacter.IsStealthy.OnValueChanged += OnStealthyChanged;
             m_ServerCharacter.MovementStatus.OnValueChanged += OnMovementStatusChanged;
             OnMovementStatusChanged(MovementStatus.Normal, m_ServerCharacter.MovementStatus.Value);
 
             // sync our visualization position & rotation to the most up to date version received from server
-            transform.SetPositionAndRotation(m_PhysicsWrapper.Transform.position, m_PhysicsWrapper.Transform.rotation);
+            transform.SetPositionAndRotation(serverCharacter.physicsWrapper.Transform.position,
+                serverCharacter.physicsWrapper.Transform.rotation);
             m_LerpedPosition = transform.position;
             m_LerpedRotation = transform.rotation;
 
             // similarly, initialize start position and rotation for smooth lerping purposes
-            m_PositionLerper = new PositionLerper(m_PhysicsWrapper.Transform.position, k_LerpTime);
-            m_RotationLerper = new RotationLerper(m_PhysicsWrapper.Transform.rotation, k_LerpTime);
+            m_PositionLerper = new PositionLerper(serverCharacter.physicsWrapper.Transform.position, k_LerpTime);
+            m_RotationLerper = new RotationLerper(serverCharacter.physicsWrapper.Transform.rotation, k_LerpTime);
 
             if (!m_ServerCharacter.IsNpc)
             {
                 name = "AvatarGraphics" + m_ServerCharacter.OwnerClientId;
 
-                if (m_ServerCharacter.TryGetComponent(out ClientAvatarGuidHandler clientAvatarGuidHandler))
+                if (m_ServerCharacter.TryGetComponent(out ClientPlayerAvatarNetworkAnimator characterNetworkAnimator))
                 {
-                    m_ClientVisualsAnimator = clientAvatarGuidHandler.graphicsAnimator;
+                    m_ClientVisualsAnimator = characterNetworkAnimator.Animator;
                 }
 
                 m_CharacterSwapper = GetComponentInChildren<CharacterSwap>();
@@ -166,7 +158,7 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
 
                     if (m_ServerCharacter.TryGetComponent(out ClientInputSender inputSender))
                     {
-                        // TODO: revisit; anticipated actions would play twice on the host
+                        // anticipated actions will only be played on non-host, owning clients
                         if (!IsServer)
                         {
                             inputSender.ActionInputEvent += OnActionInput;
@@ -181,10 +173,6 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         {
             if (m_ServerCharacter)
             {
-                //m_NetState.DoActionEventClient -= PerformActionFX;
-                //m_NetState.CancelAllActionsEventClient -= CancelAllActionFXs;
-                //m_NetState.CancelActionsByPrototypeIDEventClient -= CancelActionFXByPrototypeID;
-                //m_NetState.OnStopChargingUpClient -= OnStoppedChargingUpClient;
                 m_ServerCharacter.IsStealthy.OnValueChanged -= OnStealthyChanged;
 
                 if (m_ServerCharacter.TryGetComponent(out ClientInputSender sender))
@@ -276,15 +264,15 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
             // the game camera tracks a GameObject moving in the Update loop and therefore eliminate any camera jitter,
             // this graphics GameObject's position is smoothed over time on the host. Clients do not need to perform any
             // positional smoothing since NetworkTransform will interpolate position updates on the root GameObject.
-            if (m_IsHost)
+            if (IsHost)
             {
                 // Note: a cached position (m_LerpedPosition) and rotation (m_LerpedRotation) are created and used as
                 // the starting point for each interpolation since the root's position and rotation are modified in
                 // FixedUpdate, thus altering this transform (being a child) in the process.
                 m_LerpedPosition = m_PositionLerper.LerpPosition(m_LerpedPosition,
-                    m_PhysicsWrapper.Transform.position);
+                    serverCharacter.physicsWrapper.Transform.position);
                 m_LerpedRotation = m_RotationLerper.LerpRotation(m_LerpedRotation,
-                    m_PhysicsWrapper.Transform.rotation);
+                    serverCharacter.physicsWrapper.Transform.rotation);
                 transform.SetPositionAndRotation(m_LerpedPosition, m_LerpedRotation);
             }
 

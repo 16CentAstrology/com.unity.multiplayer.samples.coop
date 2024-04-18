@@ -20,6 +20,12 @@ namespace Unity.BossRoom.Gameplay.GameState
         /// <summary>
         /// Describes one of the players in the lobby, and their current character-select status.
         /// </summary>
+        /// <remarks>
+        /// Putting FixedString inside an INetworkSerializeByMemcpy struct is not recommended because it will lose the
+        /// bandwidth optimization provided by INetworkSerializable -- an empty FixedString128Bytes serialized normally
+        /// or through INetworkSerializable will use 4 bytes of bandwidth, but inside an INetworkSerializeByMemcpy, that
+        /// same empty value would consume 132 bytes of bandwidth. 
+        /// </remarks>
         public struct LobbyPlayerState : INetworkSerializable, IEquatable<LobbyPlayerState>
         {
             public ulong ClientId;
@@ -99,8 +105,8 @@ namespace Unity.BossRoom.Gameplay.GameState
         /// <summary>
         /// RPC to notify the server that a client has chosen a seat.
         /// </summary>
-        [ServerRpc(RequireOwnership = false)]
-        public void ChangeSeatServerRpc(ulong clientId, int seatIdx, bool lockedIn)
+        [Rpc(SendTo.Server, RequireOwnership = false)]
+        public void ServerChangeSeatRpc(ulong clientId, int seatIdx, bool lockedIn)
         {
             OnClientChangedSeat?.Invoke(clientId, seatIdx, lockedIn);
         }

@@ -1,4 +1,3 @@
-using System;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -21,6 +20,8 @@ namespace Unity.Multiplayer.Samples.Utilities
 
         bool IsNetworkSceneManagementEnabled => NetworkManager != null && NetworkManager.SceneManager != null && NetworkManager.NetworkConfig.EnableSceneManagement;
 
+        bool m_IsInitialized;
+
         public static SceneLoaderWrapper Instance { get; protected set; }
 
         public virtual void Awake()
@@ -39,32 +40,50 @@ namespace Unity.Multiplayer.Samples.Utilities
         public virtual void Start()
         {
             SceneManager.sceneLoaded += OnSceneLoaded;
+            NetworkManager.OnServerStarted += OnNetworkingSessionStarted;
+            NetworkManager.OnClientStarted += OnNetworkingSessionStarted;
+            NetworkManager.OnServerStopped += OnNetworkingSessionEnded;
+            NetworkManager.OnClientStopped += OnNetworkingSessionEnded;
+        }
+
+        void OnNetworkingSessionStarted()
+        {
+            // This prevents this to be called twice on a host, which receives both OnServerStarted and OnClientStarted callbacks
+            if (!m_IsInitialized)
+            {
+                if (IsNetworkSceneManagementEnabled)
+                {
+                    NetworkManager.SceneManager.OnSceneEvent += OnSceneEvent;
+                }
+
+                m_IsInitialized = true;
+            }
+        }
+
+        void OnNetworkingSessionEnded(bool unused)
+        {
+            if (m_IsInitialized)
+            {
+                if (IsNetworkSceneManagementEnabled)
+                {
+                    NetworkManager.SceneManager.OnSceneEvent -= OnSceneEvent;
+                }
+
+                m_IsInitialized = false;
+            }
         }
 
         public override void OnDestroy()
         {
             SceneManager.sceneLoaded -= OnSceneLoaded;
+            if (NetworkManager != null)
+            {
+                NetworkManager.OnServerStarted -= OnNetworkingSessionStarted;
+                NetworkManager.OnClientStarted -= OnNetworkingSessionStarted;
+                NetworkManager.OnServerStopped -= OnNetworkingSessionEnded;
+                NetworkManager.OnClientStopped -= OnNetworkingSessionEnded;
+            }
             base.OnDestroy();
-        }
-
-        public override void OnNetworkDespawn()
-        {
-            if (NetworkManager != null && NetworkManager.SceneManager != null)
-            {
-                NetworkManager.SceneManager.OnSceneEvent -= OnSceneEvent;
-            }
-        }
-
-        /// <summary>
-        /// Initializes the callback on scene events. This needs to be called right after initializing NetworkManager
-        /// (after StartHost, StartClient or StartServer)
-        /// </summary>
-        public virtual void AddOnSceneEventCallback()
-        {
-            if (IsNetworkSceneManagementEnabled)
-            {
-                NetworkManager.SceneManager.OnSceneEvent += OnSceneEvent;
-            }
         }
 
         /// <summary>
@@ -113,7 +132,7 @@ namespace Unity.Multiplayer.Samples.Utilities
             switch (sceneEvent.SceneEventType)
             {
                 case SceneEventType.Load: // Server told client to load a scene
-                    // Only executes on client
+                    // Only executes on client or host
                     if (NetworkManager.IsClient)
                     {
                         // Only start a new loading screen if scene loaded in Single mode, else simply update
@@ -130,23 +149,29 @@ namespace Unity.Multiplayer.Samples.Utilities
                     }
                     break;
                 case SceneEventType.LoadEventCompleted: // Server told client that all clients finished loading a scene
-                    // Only executes on client
+                    // Only executes on client or host
                     if (NetworkManager.IsClient)
                     {
                         m_ClientLoadingScreen.StopLoadingScreen();
-                        m_LoadingProgressManager.ResetLocalProgress();
                     }
                     break;
                 case SceneEventType.Synchronize: // Server told client to start synchronizing scenes
                 {
-                    // todo: this is a workaround that could be removed once MTT-3363 is done
                     // Only executes on client that is not the host
                     if (NetworkManager.IsClient && !NetworkManager.IsHost)
                     {
-                        // unload all currently loaded additive scenes so that if we connect to a server with the same
-                        // main scene we properly load and synchronize all appropriate scenes without loading a scene
-                        // that is already loaded.
-                        UnloadAdditiveScenes();
+                        if (NetworkManager.SceneManager.ClientSynchronizationMode == LoadSceneMode.Single)
+                        {
+                            // If using the Single ClientSynchronizationMode, unload all currently loaded additive
+                            // scenes. In this case, we want the client to only keep the same scenes loaded as the
+                            // server. Netcode For GameObjects will automatically handle loading all the scenes that the
+                            // server has loaded to the client during the synchronization process. If the server's main
+                            // scene is different to the client's, it will start by loading that scene in single mode,
+                            // unloading every additively loaded scene in the process. However, if the server's main
+                            // scene is the same as the client's, it will not automatically unload additive scenes, so
+                            // we do it manually here.
+                            UnloadAdditiveScenes();
+                        }
                     }
                     break;
                 }
@@ -155,7 +180,7 @@ namespace Unity.Multiplayer.Samples.Utilities
                     if (NetworkManager.IsServer)
                     {
                         // Send client RPC to make sure the client stops the loading screen after the server handles what it needs to after the client finished synchronizing, for example character spawning done server side should still be hidden by loading screen.
-                        StopLoadingScreenClientRpc(new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { sceneEvent.ClientId } } });
+                        ClientStopLoadingScreenRpc(RpcTarget.Group(new[] { sceneEvent.ClientId }, RpcTargetUse.Temp));
                     }
                     break;
             }
@@ -174,8 +199,8 @@ namespace Unity.Multiplayer.Samples.Utilities
             }
         }
 
-        [ClientRpc]
-        void StopLoadingScreenClientRpc(ClientRpcParams clientRpcParams = default)
+        [Rpc(SendTo.SpecifiedInParams)]
+        void ClientStopLoadingScreenRpc(RpcParams clientRpcParams = default)
         {
             m_ClientLoadingScreen.StopLoadingScreen();
         }
