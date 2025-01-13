@@ -88,7 +88,11 @@ namespace Unity.BossRoom.Gameplay.GameState
 
         void OnNetworkDespawn()
         {
-            m_LifeStateChangedEventMessageSubscriber?.Unsubscribe(OnLifeStateChangedEventMessage);
+            if (m_LifeStateChangedEventMessageSubscriber != null)
+            {
+                m_LifeStateChangedEventMessageSubscriber.Unsubscribe(OnLifeStateChangedEventMessage);
+            }
+
             NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnect;
             NetworkManager.Singleton.SceneManager.OnLoadEventCompleted -= OnLoadEventCompleted;
             NetworkManager.Singleton.SceneManager.OnSynchronizeComplete -= OnSynchronizeComplete;
@@ -96,7 +100,10 @@ namespace Unity.BossRoom.Gameplay.GameState
 
         protected override void OnDestroy()
         {
-            m_LifeStateChangedEventMessageSubscriber?.Unsubscribe(OnLifeStateChangedEventMessage);
+            if (m_LifeStateChangedEventMessageSubscriber != null)
+            {
+                m_LifeStateChangedEventMessageSubscriber.Unsubscribe(OnLifeStateChangedEventMessage);
+            }
 
             if (m_NetcodeHooks)
             {
@@ -197,13 +204,13 @@ namespace Unity.BossRoom.Gameplay.GameState
                 }
             }
 
-            networkAvatarGuidState.AvatarGuid.Value =
-                persistentPlayer.NetworkAvatarGuidState.AvatarGuid.Value;
+            // instantiate new NetworkVariables with a default value to ensure they're ready for use on OnNetworkSpawn
+            networkAvatarGuidState.AvatarGuid = new NetworkVariable<NetworkGuid>(persistentPlayer.NetworkAvatarGuidState.AvatarGuid.Value);
 
             // pass name from persistent player to avatar
             if (newPlayer.TryGetComponent(out NetworkNameState networkNameState))
             {
-                networkNameState.Name.Value = persistentPlayer.NetworkNameState.Name.Value;
+                networkNameState.Name = new NetworkVariable<FixedPlayerName>(persistentPlayer.NetworkNameState.Name.Value);
             }
 
             // spawn players characters with destroyWithScene = true
